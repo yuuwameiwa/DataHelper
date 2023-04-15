@@ -2,8 +2,6 @@
 using System.Text.Json;
 using Microsoft.Data.SqlClient;
 
-using StackExchange.Redis;
-
 namespace DataHelper
 {
     public class DataWriter
@@ -16,16 +14,24 @@ namespace DataHelper
         }
 
         /// <summary>
-        /// Method allows to write a model to SQL Database using metadata defined in model.
+        /// Method allows to write a model to SQL database using metadata defined in model.
         /// </summary>
-        public void WriteToSql(object data, out int? id)
+        public void WriteToSql(object data)
         {
-            if (_dataContainer.SqlConn == null)
-                throw new ArgumentNullException("Sql connection is not established.");
+            SqlCommand sqlCommand = GetSqlCommand(data);
+            using (_dataContainer.SqlConn)
+                sqlCommand.ExecuteNonQuery();
+        }
 
-            if (data == null)
-                throw new ArgumentNullException($"Object {nameof(data)} is null");
+        public int WriteToSqlWithIdentity(object data)
+        {
+            SqlCommand sqlCommand = GetSqlCommand(data);
+            using (_dataContainer.SqlConn)
+                return Convert.ToInt32(sqlCommand.ExecuteScalar());
+        }
 
+        private SqlCommand GetSqlCommand(object data)
+        {
             // Method must have tableName attribute to be able to write to database.
             Type modelType = data.GetType();
             TableAttribute tableAttribute = modelType.GetCustomAttribute<TableAttribute>();
@@ -45,80 +51,69 @@ namespace DataHelper
                 propertiesDictionary.Add(property.Name, property.GetValue(data));
             }
 
-            using (_dataContainer.SqlConn)
+            SqlCommand sqlCommand = new SqlCommand();
+
+            sqlCommand.Connection = _dataContainer.SqlConn;
+
+            string sqlBuildQuery = "INSERT INTO " + tableAttribute.TableName + " (";
+
+            // Добавить COLUMNS в запрос
+            foreach (KeyValuePair<string, dynamic> kvp in propertiesDictionary)
             {
-                SqlCommand sqlCommand = new SqlCommand();
+                if (kvp.Value != null)
+                    sqlBuildQuery += kvp.Key + ",";
+            }
 
-                sqlCommand.Connection = _dataContainer.SqlConn;
+            // Убрать последнюю запятую и добавить VALUES
+            sqlBuildQuery = sqlBuildQuery.TrimEnd(',') + ") VALUES (";
 
-                string sqlBuildQuery = "INSERT INTO " + tableAttribute.TableName + " (";
+            // Create list to check the unique VALUES() hash codes of transferred model values.
+            List<int> hashList = new List<int>();
 
-                // Добавить COLUMNS в запрос
-                foreach (KeyValuePair<string, dynamic> kvp in propertiesDictionary)
+            // Добавить VALUES в запрос
+            foreach (object value in propertiesDictionary.Values)
+            {
+                if (value != null)
                 {
-                    if (kvp.Value != null)
-                        sqlBuildQuery += kvp.Key + ",";
-                }
+                    int hashCode = value.GetHashCode();
 
-                // Убрать последнюю запятую и добавить VALUES
-                sqlBuildQuery = sqlBuildQuery.TrimEnd(',') + ") VALUES (";
+                    // SQL does not allow negative hash codes
+                    if (hashCode < 0)
+                        hashCode *= -1;
 
-                // Create list to check the unique VALUES() hash codes of transferred model values.
-                List<int> paramList = new List<int>();
+                    // Hash codes must be unique
+                    while (hashList.Contains(hashCode))
+                        hashCode++;
 
-                // Добавить VALUES в запрос
-                foreach (object value in propertiesDictionary.Values)
-                {
-                    if (value != null)
-                    {
-                        int hashCode = value.GetHashCode();
+                    // Add hash code to VALUES() list
+                    hashList.Add(hashCode);
 
-                        // SQL does not allow negative hash codes
-                        if (hashCode < 0)
-                            hashCode *= -1;
+                    // Add model value to Parameters
+                    sqlCommand.Parameters.AddWithValue(hashCode.ToString(), value);
 
-                        // Hash codes must be unique
-                        while (paramList.Contains(hashCode))
-                        {
-                            hashCode++;
-                        }
-
-                        // Add hash code to VALUES() list
-                        paramList.Add(hashCode);
-
-                        // Add model value to Parameters
-                        sqlCommand.Parameters.AddWithValue(hashCode.ToString(), value);
-
-                        // Continue building VALUES()
-                        sqlBuildQuery += "@" + hashCode.ToString() + ",";
-                    }
-                }
-
-                // Remove last comma
-                sqlBuildQuery = sqlBuildQuery.TrimEnd(',') + ")";
-
-                bool hasIdentityColumn = !string.IsNullOrEmpty(tableAttribute.IdentityColumn);
-
-                // If has identity column - get an id
-                if (hasIdentityColumn == true)
-                {
-                    sqlBuildQuery += "; SELECT SCOPE_IDENTITY()";
-                }
-
-                sqlCommand.CommandText = sqlBuildQuery;
-
-                if (hasIdentityColumn)
-                {
-                    id = Convert.ToInt32(sqlCommand.ExecuteScalar());
-                }
-                else
-                {
-                    sqlCommand.ExecuteNonQuery();
-                    id = null;
+                    // Continue building VALUES()
+                    sqlBuildQuery += "@" + hashCode.ToString() + ",";
                 }
             }
+
+            // Remove last comma
+            sqlBuildQuery = sqlBuildQuery.TrimEnd(',') + ")";
+
+            // If has identity column - get an id
+            bool hasIdentityColumn = !string.IsNullOrEmpty(tableAttribute.IdentityColumn);
+            if (hasIdentityColumn == true)
+            {
+                sqlBuildQuery += "; SELECT SCOPE_IDENTITY()";
+            }
+
+            sqlCommand.CommandText = sqlBuildQuery;
+
+            return sqlCommand;
         }
 
+        /// <summary>
+        /// Method allows to write a model to Redis database using metadata. It also can use Id from inserted sql.
+        /// </summary>
         public void WriteToRedis(object data)
         {
             if (_dataContainer.Redis == null)
@@ -136,7 +131,7 @@ namespace DataHelper
             if (!string.IsNullOrEmpty(tableAttribute.IdentityColumn))
             {
                 int identityColumnValue = (int)data.GetType().GetProperty(tableAttribute.IdentityColumn).GetValue(data);
-                string key = tableAttribute.TableName.ToLower() + ":" + identityColumnValue;
+                string key = tableAttribute.TableName.ToLower() + identityColumnValue.ToString();
                 string keyHash = key.GetHashCode().ToString();
 
                 string dataJson = JsonSerializer.Serialize(data);

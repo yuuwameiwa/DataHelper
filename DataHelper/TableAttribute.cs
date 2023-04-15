@@ -1,6 +1,6 @@
 ﻿namespace DataHelper
 {
-    [AttributeUsage(AttributeTargets.Method | AttributeTargets.Class)]
+    [AttributeUsage(AttributeTargets.Class | AttributeTargets.Method)]
     public class TableAttribute : Attribute
     {
         public string TableName { get; set; }
