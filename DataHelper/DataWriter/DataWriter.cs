@@ -30,6 +30,10 @@ namespace DataHelper.DataWriter
             throw new ArgumentNullException("Sql Connection is not established");
         }
 
+        /// <summary>
+        /// Method allows to write a model to SQL database using metadata defined in model.
+        /// </summary>
+        /// <returns> Returns Id of a pasted model</returns>
         public int WriteToSqlWithIdentity(object data)
         {
             if (_dataContainer.SqlConn != null)
@@ -44,6 +48,9 @@ namespace DataHelper.DataWriter
             throw new ArgumentNullException("Sql Connection is not established");
         }
 
+        /// <summary>
+        /// Builds SqlCommand
+        /// </summary>
         private SqlCommand GetSqlCommand(object data)
         {
             // Method must have tableName attribute to be able to write to database.
@@ -116,7 +123,7 @@ namespace DataHelper.DataWriter
         }
 
         /// <summary>
-        /// Method allows to write a model to Redis database using metadata. It also can use Id from inserted sql.
+        /// Method allows to write a model to Redis database using metadata. Metadata represents Key, Identity Column (user:42), Expiration time in seconds
         /// </summary>
         public void WriteToRedis(object data)
         {

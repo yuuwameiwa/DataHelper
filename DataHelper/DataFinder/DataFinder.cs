@@ -16,6 +16,10 @@ namespace DataHelper.DataFinder
             _dataContainer = dataContainer;
         }
 
+        /// <summary>
+        /// Accepts class. Every property will be used in WHERE.
+        /// </summary>
+        /// <returns> Returns passed class</returns>
         public T FindInSql<T>(object data) where T : class
         {
             if (_dataContainer.SqlConn == null)
@@ -86,6 +90,9 @@ namespace DataHelper.DataFinder
             }
         }
 
+        /// <summary>
+        /// Find data by key
+        /// </summary>
         public T FindInRedis<T>(string key) where T : class
         {
             IDatabase redisDatabase = _dataContainer.Redis;

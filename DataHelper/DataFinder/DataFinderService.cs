@@ -10,6 +10,9 @@ namespace DataHelper.DataFinder
 {
     public static class DataFinderService
     {
+        /// <summary>
+        /// Get TableName property from SqlAttribute.
+        /// </summary>
         public static string GetTableNameProperty(object data)
         {
             PropertyInfo tableNameProperty = data.GetType().GetProperty("TableName");
@@ -20,6 +23,9 @@ namespace DataHelper.DataFinder
             return tableNameProperty.GetValue(data).ToString();
         }
 
+        /// <summary>
+        /// Create Dictionary based on model.
+        /// </summary>
         public static Dictionary<string, dynamic> CreateDictionary(object data)
         {
             Dictionary<string, dynamic> dictionary = new Dictionary<string, dynamic>();
