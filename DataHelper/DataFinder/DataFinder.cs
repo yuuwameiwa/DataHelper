@@ -1,7 +1,11 @@
-﻿using System.Reflection;
+﻿using System.Data;
+using System.Reflection;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Data.SqlClient;
+using StackExchange.Redis;
 
-namespace DataHelper
+namespace DataHelper.DataFinder
 {
     public class DataFinder
     {
@@ -17,22 +21,11 @@ namespace DataHelper
             if (_dataContainer.SqlConn == null)
                 throw new ArgumentNullException("Sql connection is not established.");
 
-            if (data == null)
-                throw new ArgumentNullException($"Object {nameof(data)} is null");
-
             // Method must have tableName to be able to write to database.
-            PropertyInfo tableNameProperty = data.GetType().GetProperty("TableName");
-            if (tableNameProperty == null)
-                throw new ArgumentNullException($"Object {nameof(data)} does not contain TableName property");
-            string tableName = tableNameProperty.GetValue(data).ToString();
+            string tableName = DataFinderService.GetTableNameProperty(data);
 
             // Create dictionary of properties and values
-            Dictionary<string, dynamic> modelDict = new Dictionary<string, dynamic>();
-            PropertyInfo[] properties = data.GetType().GetProperties(BindingFlags.Instance | BindingFlags.Public);
-            foreach (PropertyInfo property in properties)
-            {
-                modelDict[property.Name] = property.GetValue(data);
-            }
+            Dictionary<string, dynamic> dataDict = DataFinderService.CreateDictionary(data);
 
             using (_dataContainer.SqlConn)
             {
@@ -44,7 +37,7 @@ namespace DataHelper
 
                 List<int> hashList = new List<int>();
 
-                foreach (KeyValuePair<string, dynamic> kvp in modelDict)
+                foreach (KeyValuePair<string, dynamic> kvp in dataDict)
                 {
                     int hashCode = kvp.Value.GetHashCode();
 
@@ -65,6 +58,7 @@ namespace DataHelper
 
                 sqlCommand.CommandText = sqlBuildQuery;
 
+                // TODO: Bring out to DataReader
                 using (SqlDataReader reader = sqlCommand.ExecuteReader())
                 {
                     if (!reader.HasRows)
@@ -90,6 +84,17 @@ namespace DataHelper
                     return result;
                 }
             }
+        }
+
+        public T FindInRedis<T>(string key) where T : class
+        {
+            IDatabase redisDatabase = _dataContainer.Redis;
+            if (redisDatabase.KeyExists(key))
+            {
+                string keyData = redisDatabase.StringGet(key);
+                return JsonSerializer.Deserialize<T>(keyData);
+            }
+            return null;
         }
     }
 }

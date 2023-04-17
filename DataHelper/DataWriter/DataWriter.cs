@@ -1,8 +1,8 @@
-﻿using System.Reflection;
-using System.Text.Json;
+﻿using System.Text.Json;
+using DataHelper.Attributes;
 using Microsoft.Data.SqlClient;
 
-namespace DataHelper
+namespace DataHelper.DataWriter
 {
     public class DataWriter
     {
@@ -18,59 +18,63 @@ namespace DataHelper
         /// </summary>
         public void WriteToSql(object data)
         {
-            SqlCommand sqlCommand = GetSqlCommand(data);
-            using (_dataContainer.SqlConn)
-                sqlCommand.ExecuteNonQuery();
+            if (_dataContainer.SqlConn != null)
+            {
+                SqlCommand sqlCommand = GetSqlCommand(data);
+                using (_dataContainer.SqlConn)
+                {
+                    sqlCommand.ExecuteNonQuery();
+                }
+            }
+
+            throw new ArgumentNullException("Sql Connection is not established");
         }
 
         public int WriteToSqlWithIdentity(object data)
         {
-            SqlCommand sqlCommand = GetSqlCommand(data);
-            using (_dataContainer.SqlConn)
-                return Convert.ToInt32(sqlCommand.ExecuteScalar());
+            if (_dataContainer.SqlConn != null)
+            {
+                SqlCommand sqlCommand = GetSqlCommand(data);
+                using (_dataContainer.SqlConn)
+                {
+                    return Convert.ToInt32(sqlCommand.ExecuteScalar());
+                }
+            }
+
+            throw new ArgumentNullException("Sql Connection is not established");
         }
 
         private SqlCommand GetSqlCommand(object data)
         {
             // Method must have tableName attribute to be able to write to database.
-            Type modelType = data.GetType();
-            TableAttribute tableAttribute = modelType.GetCustomAttribute<TableAttribute>();
-            if (string.IsNullOrEmpty(tableAttribute.TableName))
-                throw new ArgumentNullException($"У {nameof(data)} не может быть значения null атрибута TableName");
-
-            // Get properties from model
-            PropertyInfo[] properties = data.GetType().GetProperties();
+            DataWriterService.CheckSqlAttributes(data);
 
             // Create dictionary
-            Dictionary<string, dynamic> propertiesDictionary = new Dictionary<string, dynamic>();
-            foreach (PropertyInfo property in properties)
-            {
-                if (tableAttribute.IdentityColumn != null && property.Name == tableAttribute.IdentityColumn)
-                    continue;
+            Dictionary<string, dynamic> propertiesDictionary = DataWriterService.CreateDictionary(data);
 
-                propertiesDictionary.Add(property.Name, property.GetValue(data));
-            }
+            // Get Table Attribute
+            SqlTableAttribute tableAttribute = DataWriterService.GetSqlAttributes(data);
 
+            // Start building Query
             SqlCommand sqlCommand = new SqlCommand();
-
             sqlCommand.Connection = _dataContainer.SqlConn;
 
             string sqlBuildQuery = "INSERT INTO " + tableAttribute.TableName + " (";
 
-            // Добавить COLUMNS в запрос
+            // Add Columns()
             foreach (KeyValuePair<string, dynamic> kvp in propertiesDictionary)
             {
                 if (kvp.Value != null)
                     sqlBuildQuery += kvp.Key + ",";
             }
 
-            // Убрать последнюю запятую и добавить VALUES
+            // Remove last comma and add Values() to query
             sqlBuildQuery = sqlBuildQuery.TrimEnd(',') + ") VALUES (";
 
             // Create list to check the unique VALUES() hash codes of transferred model values.
             List<int> hashList = new List<int>();
 
-            // Добавить VALUES в запрос
+            // Add Values to query()
             foreach (object value in propertiesDictionary.Values)
             {
                 if (value != null)
@@ -99,7 +103,7 @@ namespace DataHelper
             // Remove last comma
             sqlBuildQuery = sqlBuildQuery.TrimEnd(',') + ")";
 
-            // If has identity column - get an id
+            // If has an identity column - get an id
             bool hasIdentityColumn = !string.IsNullOrEmpty(tableAttribute.IdentityColumn);
             if (hasIdentityColumn == true)
             {
@@ -119,25 +123,20 @@ namespace DataHelper
             if (_dataContainer.Redis == null)
                 throw new ArgumentNullException("Redis connection is not established.");
 
-            if (data == null)
-                throw new ArgumentNullException($"Object {nameof(data)} is null");
-
             // Method must have tableName attribute to be able to write to database.
-            Type modelType = data.GetType();
-            TableAttribute tableAttribute = modelType.GetCustomAttribute<TableAttribute>();
-            if (string.IsNullOrEmpty(tableAttribute.TableName))
-                throw new ArgumentNullException($"Model {nameof(data)} must have TableName attribute");
+            DataWriterService.CheckRedisAttributes(data);
+            RedisTableAttribute tableAttribute = DataWriterService.GetRedisAttributes(data);
 
-            if (!string.IsNullOrEmpty(tableAttribute.IdentityColumn))
-            {
-                int identityColumnValue = (int)data.GetType().GetProperty(tableAttribute.IdentityColumn).GetValue(data);
-                string key = tableAttribute.TableName.ToLower() + identityColumnValue.ToString();
-                string keyHash = key.GetHashCode().ToString();
+            // Get metadata
+            string key = tableAttribute.Key.ToLower() + tableAttribute.Identity.ToLower();
+            string keyHash = key.GetHashCode().ToString();
+            TimeSpan keyExpire = TimeSpan.FromSeconds(tableAttribute.Expire_s);
 
-                string dataJson = JsonSerializer.Serialize(data);
+            // Store data as an object
+            string dataJson = JsonSerializer.Serialize(data);
 
-                _dataContainer.Redis.StringSet(keyHash, dataJson);
-            }
+            _dataContainer.Redis.StringSet(keyHash, dataJson);
+            _dataContainer.Redis.KeyExpire(keyHash, keyExpire);
         }
     }
 }
